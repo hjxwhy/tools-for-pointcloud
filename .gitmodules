@@ -1,0 +1,3 @@
+[submodule "3rdparty/ndt_omp"]
+	path = 3rdparty/ndt_omp
+	url = https://gitee.com/csc105_slam_group/ndt_omp.git
