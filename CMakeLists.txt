@@ -4,10 +4,17 @@ project(region_growing_segmentation)
 ## Compile as C++11, supported in ROS Kinetic and newer
 # add_compile_options(-std=c++11)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -march=native -O3 -pthread")
+SET(CMAKE_BUILD_TYPE "Debug")
+SET(CMAKE_CXX_FLAGS_DEBUG "$ENV{CXXFLAGS} -O0 -Wall -g -ggdb")
+SET(CMAKE_CXX_FLAGS_RELEASE "$ENV{CXXFLAGS} -O3 -Wall")
+add_definitions(-std=c++11 -msse -msse2 -msse3 -msse4 -msse4.1 -msse4.2)
+set(CMAKE_CXX_FLAGS "-std=c++11 -msse -msse2 -msse3 -msse4 -msse4.1 -msse4.2")
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
+#SET(ndt_omp_DIR "/home/hjx/based_point_segment_ws/src/region_growing_segmentation/3rdparty/ndt_omp/build/devel/share/ndt_omp/cmake")
 find_package(catkin REQUIRED COMPONENTS
+        ndt_omp
         pcl_ros
         pcl_conversions
         roscpp
@@ -16,7 +23,12 @@ find_package(catkin REQUIRED COMPONENTS
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
+find_package(OpenMP)
 
+if (OPENMP_FOUND)
+    set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
+    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+endif()
 
 ## Uncomment this if the package has a setup.py. This macro ensures
 ## modules and global scripts declared therein get installed
@@ -118,9 +130,11 @@ catkin_package(
 ## Specify additional locations of header files
 ## Your package locations should be listed before other locations
 include_directories(
-        # include
+        3rdparty/ndt_omp/include
         "/usr/include.eigen3"
         ${catkin_INCLUDE_DIRS}
+        ${PROJECT_SOURCE_DIR}/3rdparty/include
+
 )
 
 ## Declare a C++ library
@@ -136,10 +150,10 @@ include_directories(
 ## Declare a C++ executable
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
-#add_executable(${PROJECT_NAME}_node src/region_growing.cpp src/adjust_cloud.cpp)
-add_executable(${PROJECT_NAME}_node src/adjust_cloud.cpp)
+add_executable(plane_seg src/plane_seg_clickpoint.cpp)
+add_executable(${PROJECT_NAME}_node  src/adjust_cloud.cpp)
 
-## Rename C++ executable without prefix
+## Rename C++ executable without prefix src/test_ndt_omp.cpp
 ## The above recommended prefix causes long target names, the following renames the
 ## target back to the shorter version for ease of user use
 ## e.g. "rosrun someones_pkg node" instead of "rosrun someones_pkg someones_pkg_node"
@@ -149,13 +163,19 @@ add_executable(${PROJECT_NAME}_node src/adjust_cloud.cpp)
 ## same as for the library above
 # add_dependencies(${PROJECT_NAME}_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 add_dependencies(${PROJECT_NAME}_node ${PROJECT_NAME}_gencfg)
+add_dependencies(plane_seg ${PROJECT_NAME}_gencfg)
 
 ## Specify libraries to link a library or executable target against
 target_link_libraries(${PROJECT_NAME}_node
         ${catkin_LIBRARIES}
         ${PCL_LIBRARIES}
+        ${PROJECT_SOURCE_DIR//3rdparty/ndt_omp/build/devel/lib/libndt_omp.so}
         )
-
+target_link_libraries(plane_seg
+        ${catkin_LIBRARIES}
+        ${PCL_LIBRARIES}
+#        ${PROJECT_SOURCE_DIR//3rdparty/ndt_omp/build/devel/lib/libndt_omp.so}
+        )
 #############
 ## Install ##
 #############

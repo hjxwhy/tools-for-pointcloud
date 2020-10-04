@@ -176,7 +176,7 @@ main(int argc, char **argv) {
   ros::Publisher cloud_pub = nh.advertise<sensor_msgs::PointCloud2>("/pointcloud", 1);
   ros::Publisher vis_pub = nh.advertise<visualization_msgs::Marker>("visualization_marker", 0);
   pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
-  if (pcl::io::loadPCDFile<pcl::PointXYZ>("/home/hjx/Documents/submapSumV1_sub.pcd", *cloud) == -1) {
+  if (pcl::io::loadPCDFile<pcl::PointXYZ>("/home/hjx/Documents/sub_map.pcd", *cloud) == -1) {
     std::cout << "Cloud reading failed." << std::endl;
     return (-1);
   }
@@ -260,7 +260,7 @@ main(int argc, char **argv) {
                 << coefficients->values[2] << " "
                 << coefficients->values[3] << std::endl;
       plane_normal << coefficients->values[0], coefficients->values[1], coefficients->values[2];
-      //min_point = minDisPoint(result_point);
+      min_point = minDisPoint(result_point);
 
 
 //      std::vector<pcl::PointIndices> clusters;
@@ -285,6 +285,7 @@ main(int argc, char **argv) {
       new_point = false;
     }
     marker = drawMarker(plane_normal, min_point);
+
     vis_pub.publish(marker);
 
 //    pcl::visualization::CloudViewer viewer("Cluster viewer");
