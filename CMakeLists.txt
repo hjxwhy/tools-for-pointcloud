@@ -30,6 +30,9 @@ if (OPENMP_FOUND)
     set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
 endif()
 
+set(OpenCV_DIR "/opt/ros/kinetic/share/OpenCV-3.3.1-dev")
+find_package(OpenCV REQUIRED)
+
 ## Uncomment this if the package has a setup.py. This macro ensures
 ## modules and global scripts declared therein get installed
 ## See http://ros.org/doc/api/catkin/html/user_guide/setup_dot_py.html
@@ -131,10 +134,10 @@ catkin_package(
 ## Your package locations should be listed before other locations
 include_directories(
         3rdparty/ndt_omp/include
-        "/usr/include.eigen3"
+        "/usr/include/eigen3"
         ${catkin_INCLUDE_DIRS}
         ${PROJECT_SOURCE_DIR}/3rdparty/include
-
+        ${OpenCV_INCLUDE_DIRS}
 )
 
 ## Declare a C++ library
@@ -151,7 +154,9 @@ include_directories(
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
 add_executable(plane_seg src/plane_seg_clickpoint.cpp)
-add_executable(${PROJECT_NAME}_node  src/adjust_cloud.cpp)
+add_executable(adjust_cloud  src/adjust_cloud.cpp)
+add_executable(dense_cloud src/dense_pointcloud.cpp)
+add_executable(add_cloud src/add_cloud.cpp)
 
 ## Rename C++ executable without prefix src/test_ndt_omp.cpp
 ## The above recommended prefix causes long target names, the following renames the
@@ -162,19 +167,30 @@ add_executable(${PROJECT_NAME}_node  src/adjust_cloud.cpp)
 ## Add cmake target dependencies of the executable
 ## same as for the library above
 # add_dependencies(${PROJECT_NAME}_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
-add_dependencies(${PROJECT_NAME}_node ${PROJECT_NAME}_gencfg)
+add_dependencies(adjust_cloud ${PROJECT_NAME}_gencfg)
 add_dependencies(plane_seg ${PROJECT_NAME}_gencfg)
 
 ## Specify libraries to link a library or executable target against
-target_link_libraries(${PROJECT_NAME}_node
+target_link_libraries(adjust_cloud
         ${catkin_LIBRARIES}
         ${PCL_LIBRARIES}
         ${PROJECT_SOURCE_DIR//3rdparty/ndt_omp/build/devel/lib/libndt_omp.so}
+        ${OpenCV_LIBRARIES}
         )
 target_link_libraries(plane_seg
         ${catkin_LIBRARIES}
         ${PCL_LIBRARIES}
 #        ${PROJECT_SOURCE_DIR//3rdparty/ndt_omp/build/devel/lib/libndt_omp.so}
+        )
+target_link_libraries(dense_cloud
+        ${catkin_LIBRARIES}
+        ${PCL_LIBRARIES}
+        #        ${PROJECT_SOURCE_DIR//3rdparty/ndt_omp/build/devel/lib/libndt_omp.so}
+        )
+target_link_libraries(add_cloud
+        ${catkin_LIBRARIES}
+        ${PCL_LIBRARIES}
+        #        ${PROJECT_SOURCE_DIR//3rdparty/ndt_omp/build/devel/lib/libndt_omp.so}
         )
 #############
 ## Install ##

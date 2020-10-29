@@ -20,32 +20,47 @@
 #include <geometry_msgs/PointStamped.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <visualization_msgs/Marker.h>
-
+#include <visualization_msgs/MarkerArray.h>
 #include <Eigen/Core>
 #include <Eigen/Dense>
 #include <dynamic_reconfigure/server.h>
 #include "region_growing_segmentation/TutorialsConfig.h"
-
+#define PI 3.14
 pcl::PointXYZ click_point;
 bool new_point = false;
 Eigen::Vector3f marker_normal(0, 1, 0);
-
-float bias_x,bias_y,bias_z,bias_q_x,bias_q_y,bias_q_z,bias_q_w = 0;
-float bias_s_x,bias_s_z = 0;
+float bias_x, bias_y, bias_z = 0;
+float bias_s_x, bias_s_z = 0;
+float bias_roll = 0, bias_pitch = 0, bias_yaw = 0;
+float bias_q_x, bias_q_y, bias_q_z, bias_q_w = 0;
 //pcl::visualization::CloudViewer viewer("Cluster viewer");
-
+visualization_msgs::MarkerArray marker_array;
+pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
 void callback(region_growing_segmentation::TutorialsConfig &config, uint32_t level) {
   ROS_INFO("Reconfigure Request: %f %f",
-           config.position_x,config.position_y
+           config.position_x, config.position_y
   );
+  bias_roll = config.roll * PI / 180;
+  bias_pitch = config.pitch * PI / 180;
+  bias_yaw = config.yaw * PI / 180;
+  Eigen::Quaternionf quaternionf;
+  Eigen::Vector3f euler_angle(bias_yaw, bias_pitch, bias_roll);
+  quaternionf = Eigen::AngleAxisf(euler_angle[0], Eigen::Vector3f::UnitZ()) *
+      Eigen::AngleAxisf(euler_angle[1], Eigen::Vector3f::UnitY()) *
+      Eigen::AngleAxisf(euler_angle[2], Eigen::Vector3f::UnitX());
 
   bias_x = config.position_x;
   bias_y = config.position_y;
   bias_z = config.position_z;
-  bias_q_x = config.quaternion_x;
-  bias_q_y = config.quaternion_y;
-  bias_q_z = config.quaternion_z;
-  bias_q_w = config.quaternion_w;
+  bias_q_x = quaternionf.x();
+  bias_q_y = quaternionf.y();
+  bias_q_z = quaternionf.z();
+//  bias_q_w = quaternionf.w();
+//  cout << "quaternionf x: " << quaternionf.x() << endl;
+//  cout << "quaternionf y: " << quaternionf.y() << endl;
+//  cout << "quaternionf z: " << quaternionf.z() << endl;
+//  cout << "quaternionf w: " << quaternionf.w() << endl;
+
   bias_s_x = config.scale_x;
   bias_s_z = config.scale_z;
 }
@@ -58,6 +73,11 @@ void pointCallback(const geometry_msgs::PointStampedPtr &msg) {
   new_point = true;
 }
 
+void cloudCallback(const sensor_msgs::PointCloud2ConstPtr &input) {
+  //cout << "I RECEIVED INPUT !" << endl;
+  //std::lock_guard<std::mutex> lock(cloud_lock_);
+  pcl::fromROSMsg(*input, *cloud);
+}
 //void runViewer(){
 //  while (!viewer.wasStopped()) {
 //  }
@@ -116,11 +136,11 @@ Eigen::Matrix3f calculationNormalRotation(Eigen::Vector3f plane_normal) {
   return rotation_matrix;
 }
 
-visualization_msgs::Marker drawMarker(Eigen::Vector3f plane_normal, pcl::PointXYZ min_point) {
+visualization_msgs::MarkerArray drawMarker(Eigen::Vector3f plane_normal, pcl::PointXYZ min_point) {
   Eigen::Matrix3f rotation_matrix = calculationNormalRotation(plane_normal);
   Eigen::Quaternionf q(rotation_matrix);
   visualization_msgs::Marker marker;
-  marker.header.frame_id = "cloud";
+  marker.header.frame_id = "livox_frame";
   marker.header.stamp = ros::Time();
   marker.ns = "/";
   marker.id = 0;
@@ -134,14 +154,15 @@ visualization_msgs::Marker drawMarker(Eigen::Vector3f plane_normal, pcl::PointXY
   marker.pose.orientation.z = q.z() + bias_q_z;
   marker.pose.orientation.w = q.w() + bias_q_w;
   //std::cout << "quaternion x y z :" << q.x() << " " << q.y() << " " << q.z() << std::endl;
-  marker.scale.x = 10  + bias_s_x;
+  marker.scale.x = 10 + bias_s_x;
   marker.scale.y = 0.1;
   marker.scale.z = 10 + bias_s_z;
   marker.color.a = 1.0; // Don't forget to set the alpha!
   marker.color.r = 0.0;
   marker.color.g = 1.0;
   marker.color.b = 0.0;
-  return marker;
+  marker_array.markers.push_back(marker);
+  return marker_array;
 }
 
 pcl::PointXYZ minDisPoint(pcl::PointCloud<pcl::PointXYZ> result_point) {
@@ -174,32 +195,32 @@ main(int argc, char **argv) {
   ros::Subscriber point_sub = nh.subscribe("/clicked_point", 1, pointCallback);
   ros::Publisher seg_cloud_pub = nh.advertise<sensor_msgs::PointCloud2>("/seg_pointcloud", 1);
   ros::Publisher cloud_pub = nh.advertise<sensor_msgs::PointCloud2>("/pointcloud", 1);
-  ros::Publisher vis_pub = nh.advertise<visualization_msgs::Marker>("visualization_marker", 0);
-  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
-  if (pcl::io::loadPCDFile<pcl::PointXYZ>("/home/hjx/Documents/sub_map.pcd", *cloud) == -1) {
-    std::cout << "Cloud reading failed." << std::endl;
-    return (-1);
-  }
+  ros::Publisher vis_pub = nh.advertise<visualization_msgs::MarkerArray>("visualization_marker", 0);
+  ros::Subscriber cloud_sub = nh.subscribe("/trans_pointcloud",1,cloudCallback);
+//  if (pcl::io::loadPCDFile<pcl::PointXYZ>("/home/hjx/Documents/sub_map.pcd", *cloud) == -1) {
+//    std::cout << "Cloud reading failed." << std::endl;
+//    return (-1);
+//  }
 
   pcl::PointCloud<pcl::PointXYZ>::Ptr downsampled(new pcl::PointCloud<pcl::PointXYZ>());
   pcl::VoxelGrid<pcl::PointXYZ> voxelgrid;
   voxelgrid.setLeafSize(0.1f, 0.1f, 0.1f);
-  voxelgrid.setInputCloud(cloud);
-  voxelgrid.filter(*downsampled);
-  *cloud = *downsampled;
+//  voxelgrid.setInputCloud(cloud);
+//  voxelgrid.filter(*downsampled);
+//  *cloud = *downsampled;
 
-  sensor_msgs::PointCloud2 out_pointcloud;
-  pcl::toROSMsg(*cloud, out_pointcloud);
-  out_pointcloud.header.frame_id = "cloud";
+//  sensor_msgs::PointCloud2 out_pointcloud;
+//  pcl::toROSMsg(*cloud, out_pointcloud);
+//  out_pointcloud.header.frame_id = "livox_frame";
   //cloud_pub.publish(out_pointcloud);
 
   pcl::search::Search<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>);
   pcl::PointCloud<pcl::Normal>::Ptr normals(new pcl::PointCloud<pcl::Normal>);
   pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> normal_estimator;
   normal_estimator.setSearchMethod(tree);
-  normal_estimator.setInputCloud(cloud);
-  normal_estimator.setKSearch(50);
-  normal_estimator.compute(*normals);
+//  normal_estimator.setInputCloud(cloud);
+//  normal_estimator.setKSearch(50);
+//  normal_estimator.compute(*normals);
 
 //  pcl::IndicesPtr indices(new std::vector<int>);
 //  pcl::PassThrough<pcl::PointXYZ> pass;
@@ -213,9 +234,9 @@ main(int argc, char **argv) {
   reg.setMaxClusterSize(1000000);
   reg.setSearchMethod(tree);
   reg.setNumberOfNeighbours(30);
-  reg.setInputCloud(cloud);
-  //reg.setIndices (indices);
-  reg.setInputNormals(normals);
+//  reg.setInputCloud(cloud);
+//  //reg.setIndices (indices);
+//  reg.setInputNormals(normals);
   reg.setSmoothnessThreshold(3.0 / 180.0 * M_PI);
   reg.setCurvatureThreshold(1.0);
   pcl::PointIndices point_cluster;
@@ -225,13 +246,25 @@ main(int argc, char **argv) {
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr colored_cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
   pcl::PointCloud<pcl::PointXYZ> result_point;
   sensor_msgs::PointCloud2 seg_out_pointcloud;
-  visualization_msgs::Marker marker;
+  visualization_msgs::MarkerArray marker;
   pcl::PointXYZ min_point = click_point;
-  Eigen::Vector3f plane_normal(0,1,0);
+  Eigen::Vector3f plane_normal(0, 1, 0);
   ros::Rate sleep_rate(10);
   while (ros::ok()) {
-    cloud_pub.publish(out_pointcloud);
+    //cloud_pub.publish(out_pointcloud);
     if (new_point) {
+      voxelgrid.setInputCloud(cloud);
+      voxelgrid.filter(*downsampled);
+      *cloud = *downsampled;
+
+      normal_estimator.setInputCloud(cloud);
+      normal_estimator.setKSearch(50);
+      normal_estimator.compute(*normals);
+
+      reg.setInputCloud(cloud);
+      //reg.setIndices (indices);
+      reg.setInputNormals(normals);
+
       tree->nearestKSearch(click_point, 1, index, sqr_distance);
       reg.getSegmentFromPoint(index[0], point_cluster);
       result_point.clear();
@@ -291,7 +324,7 @@ main(int argc, char **argv) {
 //    pcl::visualization::CloudViewer viewer("Cluster viewer");
     if (!result_point.empty()) {
       pcl::toROSMsg(result_point, seg_out_pointcloud);
-      seg_out_pointcloud.header.frame_id = "cloud";
+      seg_out_pointcloud.header.frame_id = "livox_frame";
       seg_cloud_pub.publish(seg_out_pointcloud);
     }
     ros::spinOnce();
