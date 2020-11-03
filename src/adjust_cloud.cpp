@@ -4,6 +4,7 @@
 #include <iostream>
 #include <vector>
 #include <thread>
+#include <fstream>
 #include <mutex>
 #include <pcl/point_types.h>
 #include <pcl/io/pcd_io.h>
@@ -40,6 +41,11 @@
 #define PI 3.14
 using namespace std;
 using namespace cv;
+struct Point2Pixel {
+  int x, y;
+  //int num;
+  float hight;
+};
 class AdjustCloud {
  public:
   AdjustCloud()
@@ -620,39 +626,111 @@ void AdjustCloud::gridROI() {
     int cols = (int) ((max_pt.y() - min_pt.y()) / 0.1) + 1;
     int rows = (int) ((max_pt.x() - min_pt.x()) / 0.1) + 1;
 //    cout << "cols " << cols << " rows " << rows << endl;
-    cv::Mat proj_mat(rows, cols, CV_32F, cv::Scalar::all(0));
-    int i, j = 0;
-    bool erase_flag = false;
-    pcl::PointCloud<pcl::PointXYZ>::Ptr copy_cloud(new pcl::PointCloud<pcl::PointXYZ>);
-    pcl::copyPointCloud(*cloud_filtered, *copy_cloud);
-    for (float x_start = min_pt.x(); x_start <= max_pt.x(); x_start += 0.1, i++) {
-      x_next_step = x_start + 0.1;
-      j = 0;
-      for (float y_start = min_pt.y(); y_start <= max_pt.y(); y_start += 0.1, j++) {
-        y_next_step = y_start + 0.1;
-        for (auto it = cloud_filtered->points.begin(); it != cloud_filtered->points.end();) {
-//          if (it->x == 0 && it->y == 0 && it->z == 0) break;
-//          if (it->y > y_start && it->y < y_next_step) {
-            if (it->y >= y_start && it->y <= y_next_step && it->x >= x_start && it->x <= x_next_step) {
-              total_hight += it->z;
-              num += 1;
-              it = cloud_filtered->erase(it);
-              erase_flag = true;
-            } else {
-              it++;
-            }
+    cv::Mat proj_mat_1(rows, cols, CV_32F, cv::Scalar::all(0));
+    cv::Mat proj_mat_2(rows, cols, CV_32F, cv::Scalar::all(0));
+    cv::Mat proj_num(rows, cols, CV_32F, cv::Scalar::all(0.0));
+
+//    int i, j = 0;
+//    pcl::PointCloud<pcl::PointXYZ>::Ptr copy_cloud(new pcl::PointCloud<pcl::PointXYZ>);
+//    pcl::copyPointCloud(*cloud_filtered, *copy_cloud);
+
+    std::vector<Point2Pixel> total_pixel;
+    Point2Pixel temp_pt;
+//    int x_row=0,y_col=0;
+    for (auto it = cloud_filtered->points.begin(); it != cloud_filtered->points.end(); it++) {
+      temp_pt.x = (int) ((it->x - min_pt.x()) / 0.1);
+      temp_pt.y = (int) ((it->y - min_pt.y()) / 0.1);
+      temp_pt.hight = it->z;
+      total_pixel.push_back(temp_pt);
+    }
+    for (auto pixel = total_pixel.begin(); pixel != total_pixel.end(); pixel++) {
+      proj_mat_1.at<float>(pixel->x, pixel->y) += pixel->hight;
+      proj_num.at<float>(pixel->x, pixel->y) += 1.0;
+    }
+
+//    for (float x_start = min_pt.x(); x_start <= max_pt.x(); x_start += 0.1, i++) {
+//      x_next_step = x_start + 0.1;
+//      j = 0;
+//      for (float y_start = min_pt.y(); y_start <= max_pt.y(); y_start += 0.1, j++) {
+//        y_next_step = y_start + 0.1;
+//        for (auto it = cloud_filtered->points.begin(); it != cloud_filtered->points.end();) {
+////          if (it->x == 0 && it->y == 0 && it->z == 0) break;
+////          if (it->y > y_start && it->y < y_next_step) {
+//          if (it->y >= y_start && it->y <= y_next_step && it->x >= x_start && it->x <= x_next_step) {
+//            total_hight += it->z;
+//            num += 1;
+//            it = cloud_filtered->erase(it);
+//          } else {
+//            it++;
 //          }
-        }
-        if (num != 0) {
-          average_hight = total_hight / num;
-          proj_mat.at<float>(i, j) = average_hight;
-          total_hight = 0;
-          num = 0;
-          average_hight = 0;
+////          }
+//        }
+//        if (num != 0) {
+//          average_hight = total_hight / num;
+//          proj_mat_2.at<float>(i, j) = average_hight;
+//          total_hight = 0;
+//          num = 0;
+//          average_hight = 0;
+//        }
+//      }
+//    }
+    cv::Mat image_1(proj_mat_1.rows, proj_mat_1.cols, CV_32F, cv::Scalar::all(0));
+    cv::Mat image_2(proj_mat_1.rows, proj_mat_1.cols, CV_32F, cv::Scalar::all(0));
+//    image_1 = proj_mat_2 * 10.0;
+//    image_2 = proj_mat_1 / proj_num;
+    cv::divide(proj_mat_1, proj_num, image_1);
+    cv::Mat element = cv::getStructuringElement(MORPH_RECT, cv::Size(5, 5));
+    cv::dilate(image_1, image_1, element);
+    bool skip_low = true;
+    bool update_edge = true;
+    int peak_row = 0;
+    int edge_row = 0;
+    float peak_row_data = 0;
+    for (int image_col = 0; image_col < image_1.cols; image_col++) {
+      skip_low = true;
+      update_edge = true;
+      peak_row = 0;
+      peak_row_data = 0;
+      for (int image_row = 0; image_row < image_1.rows; image_row++) {
+        if (image_1.at<float>(image_row, image_col) == 0 && skip_low) continue;
+        else {
+          skip_low = false;
+          if (image_1.at<float>(image_row, image_col) > peak_row_data) {
+            peak_row_data = image_1.at<float>(image_row, image_col);
+            peak_row = image_row;
+            if (update_edge) {
+              edge_row = image_row;
+              update_edge = false;
+            }
+          } else if (image_1.at<float>(image_row, image_col) == 0) {
+            peak_row_data = 0;
+            update_edge = true;
+            if (2*peak_row - image_row >=0 && image_row - peak_row <= peak_row - edge_row) {
+              image_1.at<float>(image_row,image_col) = image_1.at<float>((2*peak_row - image_row),image_col);
+            } else {
+              image_1.at<float>(image_row,image_col) = 0;
+            }
+          }
         }
       }
     }
-    cout << cloud_filtered->size() << endl;
+//    cv::dilate(image_1, image_1, element);
+    std::string filename = "/home/hjx/based_point_segment_ws/proj_image_2.csv";
+    ofstream myfile;
+    myfile.open(filename);
+    for (int i = 0; i < image_1.rows; i++) {
+      myfile << cv::format(image_1.row(i), cv::Formatter::FMT_CSV) << std::endl;
+    }
+//    myfile << cv::format(image_1.row(104),cv::Formatter::FMT_CSV) << std::endl;
+    myfile.close();
+//    myfile << cv::format(image_1, cv::Formatter::FMT_CSV) << std::endl;
+
+//    image_1 = image_1 * 10.0;  //Expand the gray value for easy visualization
+    cout << image_1.row(104)<< endl;
+//    cv::imwrite("/home/hjx/based_point_segment_ws/proj_image.jpg", image_1);
+//    cout << cloud_filtered->size() << endl;
+//    cout << copy_cloud->size() << endl;
+
 //    for (int i = 0; i < min_x_point_cluster.size(); i++) {
 //      cout << "col size " << (int) ((max_x_point_cluster[i].second.x - min_x_point_cluster[i].second.x) / 0.1) + 1
 //           << endl;
@@ -691,7 +769,6 @@ void AdjustCloud::gridROI() {
 //    *cloud_filtered = * copy_cloud;
 //    cout << "copy_cloud size " << copy_cloud->size() << endl;
   }
-//  cout << "hight size " << hight_vec.size() << endl;
 }
 
 int
