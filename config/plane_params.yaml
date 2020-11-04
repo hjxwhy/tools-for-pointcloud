@@ -1,4 +1,4 @@
-left_plane : [-0.000680925, -0.99909, 0.0426382, 11.1645]
+left_plane: [-0.000680925, -0.99909, 0.0426382, 11.1645]
 
 right_plane: [-0.00228673, -0.999897, 0.0141779, -0.697128]
 
@@ -10,8 +10,11 @@ YPR: [-46.0,14.4,0]
 xyz: [104,3.8,5.5]
 
 #fix lidar totation
-lidar_YPR: [38,17.47446692,0]
-lidar_xyz: [0,0,10]
+lidar_YPR: [43,17.47446692,9]
+lidar_xyz: [0,0,9]
 
+left_2_right_YPR: [-36.0,0,0]
+left_2_right_xyz: [6.6,8.0,0]
 
-
+load_map: True
+add_cloud: True

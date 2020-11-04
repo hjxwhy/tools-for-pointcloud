@@ -6,6 +6,7 @@
 #include <thread>
 #include <fstream>
 #include <mutex>
+#include <boost/circular_buffer.hpp>
 #include <pcl/point_types.h>
 #include <pcl/io/pcd_io.h>
 #include <pcl/search/search.h>
@@ -36,6 +37,7 @@
 #include <Eigen/Dense>
 #include <dynamic_reconfigure/server.h>
 #include <opencv2/opencv.hpp>
+#include <boost/circular_buffer.hpp>
 #include "region_growing_segmentation/cloud_tutorialsConfig.h"
 #include "pclomp/ndt_omp.h"
 #define PI 3.14
@@ -49,16 +51,17 @@ struct Point2Pixel {
 class AdjustCloud {
  public:
   AdjustCloud()
-      : roll(0), pitch(0), yaw(0), x(0), y(0), z(0) {
+      : roll(0), pitch(0), yaw(0), x(0), y(0), z(0), left_cir_buf_cloud(20), right_cir_buf_cloud(20) {
     pub = nh.advertise<sensor_msgs::PointCloud2>("/trans_pointcloud", 1);
     source_pub = nh.advertise<sensor_msgs::PointCloud2>("/source_pointcloud", 1);
     align_pub = nh.advertise<sensor_msgs::PointCloud2>("/aligned_pointcloud", 1);
     clustered_pub = nh.advertise<sensor_msgs::PointCloud2>("/clustered_pointcloud", 1);
     filtered_pub = nh.advertise<sensor_msgs::PointCloud2>("/filtered_pointcloud", 1);
     cloud_in_pub = nh.advertise<sensor_msgs::PointCloud2>("/cloud_in_pointcloud", 1);
-    marker_pub = nh.advertise<visualization_msgs::Marker>("visualization_marker", 1);
+    marker_pub = nh.advertise<visualization_msgs::Marker>("/visualization_marker", 1);
 
-    sub = nh.subscribe("/livox/lidar", 1, &AdjustCloud::pointCallback, this);
+    left_sub = nh.subscribe("/livox/left_lidar", 1, &AdjustCloud::leftPointCallback, this);
+    right_sub = nh.subscribe("/livox/right_lidar", 1, &AdjustCloud::rightPointCallback, this);
     f = boost::bind(&AdjustCloud::callback, this, _1, _2);
     server.setCallback(f);
 
@@ -76,6 +79,10 @@ class AdjustCloud {
     nh_private.getParam("xyz", xyz_params_);
     nh_private.getParam("lidar_YPR", lidar_ypr_params_);
     nh_private.getParam("lidar_xyz", lidar_xyz_params_);
+    nh_private.getParam("left_2_right_YPR", left_2_right_YPR_);
+    nh_private.getParam("left_2_right_xyz", left_2_right_xyz_);
+    nh_private.getParam("load_map", load_map);
+    nh_private.getParam("add_cloud", add_cloud);
     ndt.setMaximumIterations(ndt_maximum_iterations_);
     ndt.setNumThreads(omp_get_num_threads());
     ndt.setNeighborhoodSearchMethod(pclomp::DIRECT7);
@@ -85,15 +92,27 @@ class AdjustCloud {
     //ndt.setMaximumIterations (m_NdtMaximumIterations);//30改成5 没影响,耗时不变，都是提前跳出的
     ndt.setOulierRatio(ndt_oulier_ratio_);
 
-    transform2 << 0.817886, 0.54141, -0.194777, 6.86938,
-        -0.573275, 0.795716, -0.195429, 8.42365,
-        0.0491799, 0.271499, 0.961181, -0.270132,
+    trans_map << 0.73042, 0.673141, 0.115616, 103.989,
+        -0.659973, 0.739193, -0.13427, 3.71714,
+        -0.175845, 0.0217698, 0.984177, 5.17327,
+        0, 0, 0, 1;
+
+    left_trans << 0.795087, 0.572453, -0.200335, 6.89183,
+        -0.605218, 0.770305, -0.200853, 7.94558,
+        0.0393396, 0.280942, 0.958918, 0.958656,
         0, 0, 0, 1;
   }
-  void pointCallback(const sensor_msgs::PointCloud2ConstPtr &input) {
+  void leftPointCallback(const sensor_msgs::PointCloud2ConstPtr &input) {
     //cout << "I RECEIVED INPUT !" << endl;
-    //std::lock_guard<std::mutex> lock(cloud_lock_);
-    //pcl::fromROSMsg(*input, *cloud_in);
+//    std::lock_guard<std::mutex> lock(cloud_lock_);
+    pcl::fromROSMsg(*input, *left_cloud);
+    left_cir_buf_cloud.push_back(*left_cloud);
+  }
+  void rightPointCallback(const sensor_msgs::PointCloud2ConstPtr &input) {
+    //cout << "I RECEIVED INPUT !" << endl;
+//    std::lock_guard<std::mutex> lock(cloud_lock_);
+    pcl::fromROSMsg(*input, *right_cloud);
+    right_cir_buf_cloud.push_back(*right_cloud);
   }
 
   void callback(region_growing_segmentation::cloud_tutorialsConfig &config, uint32_t level) {
@@ -123,11 +142,46 @@ class AdjustCloud {
   void pubROIMarker();
   void gridROI();
   void transSourceCloud(Eigen::Matrix4f &transform);
-
+  void loadLidarData();
+//  inline void setPtr() {
+//    pcl::PointCloud<pcl::PointXYZ>::Ptr temp(new pcl::PointCloud<pcl::PointXYZ>);
+//    if (!left_cir_buf_cloud.empty()) {
+//      temp->clear();
+//      for (auto it = left_cir_buf_cloud.begin(); it != left_cir_buf_cloud.end(); it++) {
+//        *temp += *it;
+//      }
+//    }
+//    *source_cloud = *temp;
+//    if (!right_cir_buf_cloud.empty()) {
+//      temp->clear();
+//      for (auto it = right_cir_buf_cloud.begin(); it != right_cir_buf_cloud.end(); it++) {
+//        *temp += *it;
+//      }
+//    }
+//    *cloud_in = *temp;
+//  }
+  inline void addLeftRight() {
+//    cloud_trans->clear();
+    if (add_cloud) {
+      pcl::PointCloud<pcl::PointXYZ>::Ptr temp_cloud(new pcl::PointCloud<pcl::PointXYZ>);
+      //     Eigen::Matrix4f trans = this->getTransform(left_2_right_YPR_, left_2_right_xyz_);
+      Eigen::Matrix4f trans = this->getTransform(lidar_ypr_params_, lidar_xyz_params_);
+//      Eigen::Matrix4f trans_ = trans * left_trans ;
+      pcl::transformPointCloud(*left_cloud, *temp_cloud, left_trans);
+      cloud_in->clear();
+      *cloud_in = *right_cloud + *temp_cloud;
+      pcl::transformPointCloud(*cloud_in,*cloud_in,trans);
+    } else {
+      *cloud_in = *left_cloud;
+      *source_cloud = *right_cloud;
+    }
+  }
   std::vector<float> ypr_params_;
   std::vector<float> xyz_params_;
   std::vector<float> lidar_ypr_params_;
   std::vector<float> lidar_xyz_params_;
+  std::vector<float> left_2_right_YPR_;
+  std::vector<float> left_2_right_xyz_;
  private:
   ros::NodeHandle nh;
   ros::NodeHandle nh_private;
@@ -139,7 +193,8 @@ class AdjustCloud {
   ros::Publisher filtered_pub;
   ros::Publisher cloud_in_pub;
 
-  ros::Subscriber sub;
+  ros::Subscriber left_sub;
+  ros::Subscriber right_sub;
   tf::TransformBroadcaster br;
   dynamic_reconfigure::Server<region_growing_segmentation::cloud_tutorialsConfig> server;
   dynamic_reconfigure::Server<region_growing_segmentation::cloud_tutorialsConfig>::CallbackType f;
@@ -149,6 +204,11 @@ class AdjustCloud {
   pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered{new pcl::PointCloud<pcl::PointXYZ>};
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_clustered{new pcl::PointCloud<pcl::PointXYZRGB>};
   pcl::PointCloud<pcl::PointXYZ>::Ptr source_cloud{new pcl::PointCloud<pcl::PointXYZ>};
+  pcl::PointCloud<pcl::PointXYZ>::Ptr left_cloud{new pcl::PointCloud<pcl::PointXYZ>};
+  pcl::PointCloud<pcl::PointXYZ>::Ptr right_cloud{new pcl::PointCloud<pcl::PointXYZ>};
+  pcl::PointCloud<pcl::PointXYZ>::Ptr map_cloud{new pcl::PointCloud<pcl::PointXYZ>};
+  boost::circular_buffer<pcl::PointCloud<pcl::PointXYZ>> left_cir_buf_cloud;
+  boost::circular_buffer<pcl::PointCloud<pcl::PointXYZ>> right_cir_buf_cloud;
 
   sensor_msgs::PointCloud2 cloud_out;//转换为ros格式
   sensor_msgs::PointCloud2 source_cloud_out;
@@ -181,8 +241,11 @@ class AdjustCloud {
   Eigen::Vector4f min_pt, max_pt;
 
   std::vector<float> hight_vec;
+  bool load_map;
+  bool add_cloud = true;
 
-  Eigen::Matrix4f transform2;
+  Eigen::Matrix4f trans_map;
+  Eigen::Matrix4f left_trans;
 };
 
 Eigen::Matrix4f AdjustCloud::getTransform() {
@@ -216,18 +279,22 @@ Eigen::Matrix4f AdjustCloud::getTransform(std::vector<float> ypr_params, std::ve
 void AdjustCloud::transSourceCloud(Eigen::Matrix4f &transform) {
   if (!source_cloud->empty()) {
     Eigen::Matrix4f t_inverse;
-    t_inverse.block(0, 0, 3, 3) = transform.block(0, 0, 3, 3).transpose();
-    t_inverse.block(3, 0, 1, 3) = transform.block(3, 0, 1, 3);
-    t_inverse.block(0, 3, 3, 1) = -t_inverse.block(0, 0, 3, 3) * transform.block(0, 3, 3, 1);
-    t_inverse.block(3, 3, 1, 1) = transform.block(3, 3, 1, 1);
+    t_inverse.block(0, 0, 3, 3) = trans_map.block(0, 0, 3, 3).transpose();
+    t_inverse.block(3, 0, 1, 3) = trans_map.block(3, 0, 1, 3);
+    t_inverse.block(0, 3, 3, 1) = -t_inverse.block(0, 0, 3, 3) * trans_map.block(0, 3, 3, 1);
+    t_inverse.block(3, 3, 1, 1) = trans_map.block(3, 3, 1, 1);
+//    t_inverse.block(0, 0, 3, 3) = transform.block(0, 0, 3, 3).transpose();
+//    t_inverse.block(3, 0, 1, 3) = transform.block(3, 0, 1, 3);
+//    t_inverse.block(0, 3, 3, 1) = -t_inverse.block(0, 0, 3, 3) * transform.block(0, 3, 3, 1);
+//    t_inverse.block(3, 3, 1, 1) = transform.block(3, 3, 1, 1);
     Eigen::Matrix4f rotation_matrix = this->getTransform(lidar_ypr_params_, lidar_xyz_params_);
     Eigen::Matrix4f tmp;
     tmp = rotation_matrix * t_inverse;
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_tmp{new pcl::PointCloud<pcl::PointXYZ>};//加工后的pcl格式
 
     pcl::transformPointCloud(*source_cloud, *cloud_trans, tmp);
-    pcl::transformPointCloud(*cloud_in, *cloud_tmp, rotation_matrix);
-    *cloud_in = *cloud_tmp;
+//    pcl::transformPointCloud(*cloud_in, *cloud_tmp, rotation_matrix);
+//    *cloud_in = *cloud_tmp;
   }
 }
 void AdjustCloud::transformCloud(Eigen::Matrix4f &transform) {
@@ -236,7 +303,7 @@ void AdjustCloud::transformCloud(Eigen::Matrix4f &transform) {
   if (!cloud_in->empty()) {
     //std::lock_guard<std::mutex> lock(cloud_lock_);
 //    Eigen::Matrix4f tmp;
-//    tmp = transform2 * transform;
+//    tmp = trans_map * transform;
     cloud_trans->clear();
     pcl::transformPointCloud(*cloud_in, *cloud_trans, transform);
   }
@@ -303,26 +370,55 @@ bool AdjustCloud::loadSourceCloud() {
 //    voxelgrid.filter(*downsampled);
 //    *cloud_in = *downsampled;
 //  }
-  if (!pcl::io::loadPCDFile("/home/hjx/based_point_segment_ws/sub_map.pcd", *source_cloud)) {
-    std::cerr << "success to load " << "source_pcd" << std::endl;
-    // downsampling
-    pcl::PointCloud<pcl::PointXYZ>::Ptr downsampled(new pcl::PointCloud<pcl::PointXYZ>());
-    pcl::VoxelGrid<pcl::PointXYZ> voxelgrid;
-    voxelgrid.setLeafSize(0.5f, 0.5f, 0.5f);
-    voxelgrid.setInputCloud(source_cloud);
-    voxelgrid.filter(*downsampled);
-    *source_cloud = *downsampled;
+//  pcl::PointCloud<pcl::PointXYZ>::Ptr temp(new pcl::PointCloud<pcl::PointXYZ>);
+//  if (!left_cir_buf_cloud.empty()) {
+//    temp->clear();
+//    for (auto it = left_cir_buf_cloud.begin(); it != left_cir_buf_cloud.end(); it++) {
+//      *temp += *it;
+//    }
+//  }
+//  *left_cloud = *temp;
+//  temp->clear();
+//  if (!right_cir_buf_cloud.empty()) {
+//    for (auto it = right_cir_buf_cloud.begin(); it != right_cir_buf_cloud.end(); it++) {
+//      *temp += *it;
+//    }
+//  }
+//  *right_cloud = *temp;
+//  pcl::PointCloud<pcl::PointXYZ>::Ptr downsampled(new pcl::PointCloud<pcl::PointXYZ>());
+//  pcl::VoxelGrid<pcl::PointXYZ> voxelgrid;
+//  voxelgrid.setLeafSize(0.5f, 0.5f, 0.5f);
+//  voxelgrid.setInputCloud(left_cloud);
+//  voxelgrid.filter(*downsampled);
+//  *left_cloud = *downsampled;
+//
+//  voxelgrid.setInputCloud(right_cloud);
+//  voxelgrid.filter(*downsampled);
+//  *right_cloud = *downsampled;
+
+  if (load_map) {
+    if (!pcl::io::loadPCDFile("/home/hjx/based_point_segment_ws/sub_map.pcd", *map_cloud)) {
+      std::cerr << "success to load " << "source_pcd" << std::endl;
+      // downsampling
+      pcl::PointCloud<pcl::PointXYZ>::Ptr downsampled(new pcl::PointCloud<pcl::PointXYZ>());
+      pcl::VoxelGrid<pcl::PointXYZ> voxelgrid;
+      voxelgrid.setLeafSize(0.5f, 0.5f, 0.5f);
+      voxelgrid.setInputCloud(map_cloud);
+      voxelgrid.filter(*downsampled);
+      *map_cloud = *downsampled;
+      *source_cloud = *map_cloud;
+    }
   }
-  if (!pcl::io::loadPCDFile("/home/hjx/based_point_segment_ws/add.pcd", *cloud_in)) {
-    std::cerr << "success to load " << "add_pcd" << std::endl;
-    // downsampling
-    pcl::PointCloud<pcl::PointXYZ>::Ptr downsampled(new pcl::PointCloud<pcl::PointXYZ>());
-    pcl::VoxelGrid<pcl::PointXYZ> voxelgrid;
-    voxelgrid.setLeafSize(0.1f, 0.1f, 0.1f);
-    voxelgrid.setInputCloud(cloud_in);
-    voxelgrid.filter(*downsampled);
-    *cloud_in = *downsampled;
-  }
+//  if (!pcl::io::loadPCDFile("/home/hjx/based_point_segment_ws/add.pcd", *cloud_in)) {
+//    std::cerr << "success to load " << "add_pcd" << std::endl;
+//    // downsampling
+//    pcl::PointCloud<pcl::PointXYZ>::Ptr downsampled(new pcl::PointCloud<pcl::PointXYZ>());
+//    pcl::VoxelGrid<pcl::PointXYZ> voxelgrid;
+//    voxelgrid.setLeafSize(0.1f, 0.1f, 0.1f);
+//    voxelgrid.setInputCloud(cloud_in);
+//    voxelgrid.filter(*downsampled);
+//    *cloud_in = *downsampled;
+//  }
 }
 tf::Transform AdjustCloud::broadcasterTF() {
   tf::Transform transform;
@@ -345,7 +441,8 @@ void AdjustCloud::cloudAlign(Eigen::Matrix4f &trans) {
     ndt.setInputTarget(source_cloud);
     ndt.setInputSource(final);
     ndt.align(*cloud_aligned, trans);
-    //cout << ndt.getFinalTransformation() << endl;
+    cout << ndt.getFinalTransformation() << endl;
+
     //cout << "aligned score" << ndt.getFitnessScore() << endl;
     cout << "aligned over" << endl;
   }
@@ -705,28 +802,28 @@ void AdjustCloud::gridROI() {
           } else if (image_1.at<float>(image_row, image_col) == 0) {
             peak_row_data = 0;
             update_edge = true;
-            if (2*peak_row - image_row >=0 && image_row - peak_row <= peak_row - edge_row) {
-              image_1.at<float>(image_row,image_col) = image_1.at<float>((2*peak_row - image_row),image_col);
+            if (2 * peak_row - image_row >= 0 && image_row - peak_row <= peak_row - edge_row) {
+              image_1.at<float>(image_row, image_col) = image_1.at<float>((2 * peak_row - image_row), image_col);
             } else {
-              image_1.at<float>(image_row,image_col) = 0;
+              image_1.at<float>(image_row, image_col) = 0;
             }
           }
         }
       }
     }
 //    cv::dilate(image_1, image_1, element);
-    std::string filename = "/home/hjx/based_point_segment_ws/proj_image_2.csv";
-    ofstream myfile;
-    myfile.open(filename);
-    for (int i = 0; i < image_1.rows; i++) {
-      myfile << cv::format(image_1.row(i), cv::Formatter::FMT_CSV) << std::endl;
-    }
+//    std::string filename = "/home/hjx/based_point_segment_ws/proj_image_2.csv";
+//    ofstream myfile;
+//    myfile.open(filename);
+//    for (int i = 0; i < image_1.rows; i++) {
+//      myfile << cv::format(image_1.row(i), cv::Formatter::FMT_CSV) << std::endl;
+//    }
 //    myfile << cv::format(image_1.row(104),cv::Formatter::FMT_CSV) << std::endl;
-    myfile.close();
+//    myfile.close();
 //    myfile << cv::format(image_1, cv::Formatter::FMT_CSV) << std::endl;
 
 //    image_1 = image_1 * 10.0;  //Expand the gray value for easy visualization
-    cout << image_1.row(104)<< endl;
+//    cout << image_1.row(104) << endl;
 //    cv::imwrite("/home/hjx/based_point_segment_ws/proj_image.jpg", image_1);
 //    cout << cloud_filtered->size() << endl;
 //    cout << copy_cloud->size() << endl;
@@ -770,6 +867,33 @@ void AdjustCloud::gridROI() {
 //    cout << "copy_cloud size " << copy_cloud->size() << endl;
   }
 }
+void AdjustCloud::loadLidarData() {
+  pcl::PointCloud<pcl::PointXYZ>::Ptr temp(new pcl::PointCloud<pcl::PointXYZ>);
+  if (!left_cir_buf_cloud.empty()) {
+    temp->clear();
+    for (auto it = left_cir_buf_cloud.begin(); it != left_cir_buf_cloud.end(); it++) {
+      *temp += *it;
+    }
+  }
+  *left_cloud = *temp;
+  temp->clear();
+  if (!right_cir_buf_cloud.empty()) {
+    for (auto it = right_cir_buf_cloud.begin(); it != right_cir_buf_cloud.end(); it++) {
+      *temp += *it;
+    }
+  }
+  *right_cloud = *temp;
+  pcl::PointCloud<pcl::PointXYZ>::Ptr downsampled(new pcl::PointCloud<pcl::PointXYZ>());
+  pcl::VoxelGrid<pcl::PointXYZ> voxelgrid;
+  voxelgrid.setLeafSize(0.5f, 0.5f, 0.5f);
+  voxelgrid.setInputCloud(left_cloud);
+  voxelgrid.filter(*downsampled);
+  *left_cloud = *downsampled;
+
+  voxelgrid.setInputCloud(right_cloud);
+  voxelgrid.filter(*downsampled);
+  *right_cloud = *downsampled;
+}
 
 int
 main(int argc, char **argv) {
@@ -784,15 +908,18 @@ main(int argc, char **argv) {
   trans_pointcloud.filterPointByPlane(dis_vec);
   trans_pointcloud.removeOutlier();
   trans_pointcloud.euclideanCluster();
-  trans_pointcloud.gridROI();
+//  trans_pointcloud.gridROI();
   while (ros::ok()) {
     //trans_pointcloud.broadcasterTF();
+//    trans_pointcloud.setPtr();
+    trans_pointcloud.loadLidarData();
+    trans_pointcloud.addLeftRight();
 //    Eigen::Matrix4f transform = trans_pointcloud.getTransform();
 //    trans_pointcloud.transformCloud(transform);
 //    trans_pointcloud.transformCloud(rotation_matrix);
 //    trans_pointcloud.cloudAlign(transform);
 //    trans_pointcloud.pubROIMarker();
-//    trans_pointcloud.pubTransformedCloud();
+    trans_pointcloud.pubTransformedCloud();
     sleep_rate.sleep();
     ros::spinOnce();
   }
