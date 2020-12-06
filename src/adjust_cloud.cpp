@@ -83,6 +83,8 @@ class AdjustCloud {
     nh_private.getParam("left_2_right_xyz", left_2_right_xyz_);
     nh_private.getParam("load_map", load_map);
     nh_private.getParam("add_cloud", add_cloud);
+    nh_private.getParam("hand_adjust", hand_adjust);
+    nh_private.getParam("align_", align_);
     ndt.setMaximumIterations(ndt_maximum_iterations_);
     ndt.setNumThreads(omp_get_num_threads());
     ndt.setNeighborhoodSearchMethod(pclomp::DIRECT7);
@@ -170,7 +172,7 @@ class AdjustCloud {
       pcl::transformPointCloud(*left_cloud, *temp_cloud, left_trans);
       cloud_in->clear();
       *cloud_in = *right_cloud + *temp_cloud;
-      pcl::transformPointCloud(*cloud_in,*cloud_in,trans);
+      pcl::transformPointCloud(*cloud_in, *cloud_in, trans);
     } else {
       *cloud_in = *left_cloud;
       *source_cloud = *right_cloud;
@@ -182,6 +184,9 @@ class AdjustCloud {
   std::vector<float> lidar_xyz_params_;
   std::vector<float> left_2_right_YPR_;
   std::vector<float> left_2_right_xyz_;
+
+  bool hand_adjust = false;
+
  private:
   ros::NodeHandle nh;
   ros::NodeHandle nh_private;
@@ -241,8 +246,9 @@ class AdjustCloud {
   Eigen::Vector4f min_pt, max_pt;
 
   std::vector<float> hight_vec;
-  bool load_map;
+  bool load_map = false;
   bool add_cloud = true;
+  bool align_ = false;
 
   Eigen::Matrix4f trans_map;
   Eigen::Matrix4f left_trans;
@@ -300,7 +306,7 @@ void AdjustCloud::transSourceCloud(Eigen::Matrix4f &transform) {
 void AdjustCloud::transformCloud(Eigen::Matrix4f &transform) {
   Eigen::Isometry3f T = Eigen::Isometry3f::Identity();
   Eigen::Matrix4f matrix4f = T.matrix();
-  if (!cloud_in->empty()) {
+  if (!cloud_in->empty() && hand_adjust) {
     //std::lock_guard<std::mutex> lock(cloud_lock_);
 //    Eigen::Matrix4f tmp;
 //    tmp = trans_map * transform;
@@ -431,7 +437,7 @@ tf::Transform AdjustCloud::broadcasterTF() {
   return transform;
 }
 void AdjustCloud::cloudAlign(Eigen::Matrix4f &trans) {
-  if (!source_cloud->empty() && !cloud_in->empty()) {
+  if (!source_cloud->empty() && !cloud_in->empty() && align_) {
     //std::lock_guard<std::mutex> lock(cloud_lock_);
     cloud_in->is_dense = false;
     std::vector<int> out_inliers;
@@ -914,10 +920,13 @@ main(int argc, char **argv) {
 //    trans_pointcloud.setPtr();
     trans_pointcloud.loadLidarData();
     trans_pointcloud.addLeftRight();
-//    Eigen::Matrix4f transform = trans_pointcloud.getTransform();
-//    trans_pointcloud.transformCloud(transform);
-//    trans_pointcloud.transformCloud(rotation_matrix);
-//    trans_pointcloud.cloudAlign(transform);
+    Eigen::Matrix4f transform = trans_pointcloud.getTransform();
+//    if (trans_pointcloud.hand_adjust) {
+    trans_pointcloud.transformCloud(transform);
+//    } else {
+//      trans_pointcloud.transformCloud(rotation_matrix);
+//    }
+    trans_pointcloud.cloudAlign(transform);
 //    trans_pointcloud.pubROIMarker();
     trans_pointcloud.pubTransformedCloud();
     sleep_rate.sleep();

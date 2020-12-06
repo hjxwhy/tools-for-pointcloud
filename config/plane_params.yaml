@@ -18,3 +18,5 @@ left_2_right_xyz: [6.6,8.0,0]
 
 load_map: True
 add_cloud: True
+hand_adjust: False
+align_: False
