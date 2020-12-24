@@ -1,17 +1,19 @@
-left_plane: [-0.000680925, -0.99909, 0.0426382, 11.1645]
+left_plane: [-0.00301767, -0.999989, -0.00370002, 11.6785]
 
-right_plane: [-0.00228673, -0.999897, 0.0141779, -0.697128]
+right_plane: [-0.000907324, -0.999765, -0.0216685, -0.350168]
 
-back_plane: [0.971976, 0.233684, -0.0255787, -32.1141]
+back_plane: [0.971066, 0.237772, 0.0222419, -32.2739]
 
 # rotate lidar data to map,but rotate the map to the lidar acturally when calculate volume
 # folloing params is raw data from lidar to map
-YPR: [-46.0,14.4,0]
-xyz: [104,3.8,5.5]
+YPR: [-72,23.0,0]
+xyz: [104,3.5,6.0]
 
-#fix lidar totation
-lidar_YPR: [43,17.47446692,9]
-lidar_xyz: [0,0,9]
+#fix lidar rotation
+#lidar_YPR: [12,23,0]
+#lidar_xyz: [0,0,10.4]
+lidar_YPR: [0,0,0]
+lidar_xyz: [0,0,3.5]
 
 left_2_right_YPR: [-36.0,0,0]
 left_2_right_xyz: [6.6,8.0,0]
@@ -20,3 +22,4 @@ load_map: True
 add_cloud: True
 hand_adjust: False
 align_: False
+cloud_dir: "/home/hjx/based_point_segment_ws/b_pcd/small_2.pcd"
